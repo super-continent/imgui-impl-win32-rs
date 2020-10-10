@@ -4,31 +4,22 @@ use imgui::{BackendFlags, Context, ImString, Key};
 use thiserror::Error;
 use winapi::shared::{
     minwindef::*,
-    ntdef::LARGE_INTEGER,
     windef::{
         RECT,
         HWND,
     }
 };
-use winapi::um::{profileapi::*, winuser::*};
+use winapi::um::winuser::*;
+use std::time::Instant;
 
 pub struct Win32Impl {
     hwnd: HWND,
-    frequency: LARGE_INTEGER,
-    time: LARGE_INTEGER,
+    time: Instant,
 }
 
 impl Win32Impl {
     pub unsafe fn init(imgui: &mut Context, hwnd: HWND) -> Result<Win32Impl, Win32ImplError> {
-        let mut frequency: LARGE_INTEGER = mem::zeroed();
-        let mut time: LARGE_INTEGER = mem::zeroed();
-
-        if FALSE == QueryPerformanceFrequency(&mut frequency) {
-            return Err(Win32ImplError::ExternalError("QueryPerformanceFrequency failed".into()));
-        };
-        if FALSE == QueryPerformanceCounter(&mut time) {
-            return Err(Win32ImplError::ExternalError("QueryPerformanceCounter failed".into()));
-        };
+        let time = Instant::now();
 
         let io = imgui.io_mut();
 
@@ -65,7 +56,6 @@ impl Win32Impl {
 
         return Ok(Win32Impl {
             hwnd,
-            frequency,
             time,
         });
     }
@@ -81,14 +71,10 @@ impl Win32Impl {
         io.display_size = [(rect.right - rect.left) as f32, (rect.bottom - rect.top) as f32];
         
         // Perform time step
-        let mut current_time: LARGE_INTEGER = mem::zeroed();
-        QueryPerformanceCounter(&mut current_time);
+        let current_time = Instant::now();
+        let last_time = self.time;
 
-        let current_time_i = *current_time.QuadPart();
-        let last_time_i = *self.time.QuadPart();
-        let ticks_per_second_i  = *self.frequency.QuadPart();
-        
-        io.delta_time = ((current_time_i - last_time_i) / ticks_per_second_i) as f32;
+        io.delta_time = current_time.duration_since(last_time).as_secs_f32();
         self.time = current_time;
 
         // Read key states
