@@ -9,4 +9,5 @@ edition = "2018"
 [dependencies]
 winapi = { version = "0.3", features = ["minwindef", "windef", "winuser"] }
 imgui = "0.5"
+imgui-sys = "0.5.0"
 thiserror = "1.0"

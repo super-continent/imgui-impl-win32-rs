@@ -1,20 +1,20 @@
 use std::mem;
+use std::ptr;
 
-use imgui::{BackendFlags, Context, ImString, Key};
+use imgui::{BackendFlags, ConfigFlags, Context, ImString, Key};
+use imgui_sys::*;
+use std::time::Instant;
 use thiserror::Error;
 use winapi::shared::{
     minwindef::*,
-    windef::{
-        RECT,
-        HWND,
-    }
+    windef::{HWND, POINT, RECT, HICON},
 };
 use winapi::um::winuser::*;
-use std::time::Instant;
 
 pub struct Win32Impl {
     hwnd: HWND,
     time: Instant,
+    last_cursor: ImGuiMouseCursor,
 }
 
 impl Win32Impl {
@@ -54,22 +54,28 @@ impl Win32Impl {
             env!("CARGO_PKG_VERSION")
         ))));
 
+        let last_cursor = ImGuiMouseCursor_None;
+
         return Ok(Win32Impl {
             hwnd,
             time,
+            last_cursor,
         });
     }
 
-    pub unsafe fn prepare_frame(&mut self, imgui: &mut Context) -> Result<(), Win32ImplError> {
-        let io = imgui.io_mut();
+    pub unsafe fn prepare_frame(&mut self, context: &mut Context) -> Result<(), Win32ImplError> {
+        let io = context.io_mut();
 
         // Set up display size every frame to handle resizing
         let mut rect: RECT = mem::zeroed();
         if FALSE == GetClientRect(self.hwnd, &mut rect) {
             return Err(Win32ImplError::ExternalError("GetClientRect failed".into()));
         };
-        io.display_size = [(rect.right - rect.left) as f32, (rect.bottom - rect.top) as f32];
-        
+        io.display_size = [
+            (rect.right - rect.left) as f32,
+            (rect.bottom - rect.top) as f32,
+        ];
+
         // Perform time step
         let current_time = Instant::now();
         let last_time = self.time;
@@ -83,10 +89,191 @@ impl Win32Impl {
         io.key_alt = (GetKeyState(VK_MENU) as u16 & 0x8000) != 0;
         io.key_super = false;
 
-        // TODO mouse cursor impl
+        // Mouse cursor pos and icon updates
+        let current_cursor = if io.mouse_draw_cursor {
+            ImGuiMouseCursor_None
+        } else {
+            igGetMouseCursor()
+        };
+
+        self.update_cursor_pos(context);
+        if self.last_cursor != current_cursor {
+            self.last_cursor = current_cursor;
+            update_cursor(context);
+        }
 
         Ok(())
     }
+
+
+
+    /// Call this function in WndProc and provide it an imgui Context + all the arguments WndProc takes
+    pub unsafe fn window_proc(
+        &self,
+        context: &mut Context,
+        window: HWND,
+        msg: UINT,
+        wparam: WPARAM,
+        lparam: LPARAM,
+    ) -> Result<(), Win32ImplError> {
+        let io = context.io_mut();
+
+        // awful after fmt but it works i guess
+        match msg {
+            WM_LBUTTONDOWN | WM_LBUTTONDBLCLK | WM_RBUTTONDOWN | WM_RBUTTONDBLCLK
+            | WM_MBUTTONDOWN | WM_MBUTTONDBLCLK => {
+                let mut button = 0;
+                if msg == WM_LBUTTONDOWN || msg == WM_LBUTTONDBLCLK {
+                    button = 0;
+                }
+                if msg == WM_RBUTTONDOWN || msg == WM_RBUTTONDBLCLK {
+                    button = 1;
+                }
+                if msg == WM_MBUTTONDOWN || msg == WM_MBUTTONDBLCLK {
+                    button = 2;
+                }
+                if msg == WM_XBUTTONDOWN || msg == WM_XBUTTONDBLCLK {
+                    button = if GET_XBUTTON_WPARAM(wparam) == XBUTTON1 {
+                        3
+                    } else {
+                        4
+                    }
+                }
+
+                if !igIsAnyMouseDown() && GetCapture().is_null() {
+                    SetCapture(window);
+                }
+
+                io.mouse_down[button] = true;
+            }
+
+            WM_LBUTTONUP | WM_RBUTTONUP | WM_MBUTTONUP | WM_XBUTTONUP => {
+                let mut button = 0;
+                if msg == WM_LBUTTONUP {
+                    button = 0;
+                }
+                if msg == WM_RBUTTONUP {
+                    button = 1;
+                }
+                if msg == WM_MBUTTONUP {
+                    button = 2;
+                }
+                if msg == WM_XBUTTONUP {
+                    button = if GET_XBUTTON_WPARAM(wparam) == XBUTTON1 {
+                        3
+                    } else {
+                        4
+                    }
+                }
+
+                io.mouse_down[button] = false;
+                if !igIsAnyMouseDown() && GetCapture() == window {
+                    ReleaseCapture();
+                }
+            }
+
+            WM_MOUSEWHEEL => {
+                io.mouse_wheel += (GET_WHEEL_DELTA_WPARAM(wparam) / WHEEL_DELTA) as f32;
+            }
+
+            WM_MOUSEHWHEEL => {
+                io.mouse_wheel_h += (GET_WHEEL_DELTA_WPARAM(wparam) / WHEEL_DELTA) as f32;
+            }
+
+            WM_KEYDOWN | WM_SYSKEYDOWN => {
+                if wparam < 256 {
+                    io.keys_down[wparam] = true;
+                }
+            }
+
+            WM_KEYUP | WM_SYSKEYUP => {
+                if wparam < 256 {
+                    io.keys_down[wparam] = false;
+                }
+            }
+
+            WM_CHAR => {
+                if wparam > 0 && wparam < 0x10000 {
+                    let ig_io = igGetIO();
+                    ImGuiIO_AddInputCharacterUTF16(ig_io, wparam as u16);
+                }
+            }
+
+            WM_SETCURSOR => {
+                if LOWORD(lparam as u32) as isize == HTCLIENT {
+                    update_cursor(context);
+                }
+            }
+
+            // currently no gamepad support
+            WM_DEVICECHANGE => {}
+
+            _ => return Ok(()),
+        };
+
+        Ok(())
+    }
+
+    unsafe fn update_cursor_pos(&self, context: &mut Context) {
+        let io = context.io_mut();
+
+        if io.want_set_mouse_pos {
+            let mut pos = POINT {
+                x: io.mouse_pos[0] as i32,
+                y: io.mouse_pos[1] as i32,
+            };
+
+            ClientToScreen(self.hwnd, &mut pos);
+            SetCursorPos(pos.x, pos.y);
+        }
+
+        io.mouse_pos = [-f32::MAX, -f32::MAX];
+
+        let mut pos: POINT = mem::zeroed();
+        let foreground_hwnd = GetForegroundWindow();
+
+        if self.hwnd == foreground_hwnd || IsChild(foreground_hwnd, self.hwnd) == TRUE {
+            if GetCursorPos(&mut pos) == TRUE && ScreenToClient(self.hwnd, &mut pos) == TRUE {
+                io.mouse_pos = [pos.x as f32, pos.y as f32];
+            }
+        };
+    }
+
+}
+
+unsafe fn update_cursor(context: &mut Context) -> bool {
+    let io = context.io_mut();
+
+    if io
+        .config_flags
+        .contains(ConfigFlags::NO_MOUSE_CURSOR_CHANGE)
+    {
+        return false
+    };
+
+    let mouse_cursor = igGetMouseCursor();
+    if mouse_cursor == ImGuiMouseCursor_None || io.mouse_draw_cursor {
+        // Hide mouse cursor so imgui can draw it or if none should be displayed
+        SetCursor(ptr::null_mut());
+    }
+    else {
+        #[allow(non_upper_case_globals)]
+        let win32_cursor = match mouse_cursor {
+            ImGuiMouseCursor_Arrow => IDC_ARROW,
+            ImGuiMouseCursor_TextInput => IDC_IBEAM,
+            ImGuiMouseCursor_ResizeAll => IDC_SIZEALL,
+            ImGuiMouseCursor_ResizeEW => IDC_SIZEWE,
+            ImGuiMouseCursor_ResizeNS => IDC_SIZENS,
+            ImGuiMouseCursor_ResizeNESW => IDC_SIZENESW,
+            ImGuiMouseCursor_ResizeNWSE => IDC_SIZENWSE,
+            ImGuiMouseCursor_Hand => IDC_HAND,
+            ImGuiMouseCursor_NotAllowed => IDC_NO,
+            _ => IDC_ARROW
+        };
+        SetCursor(win32_cursor as HICON);
+    };
+
+    return true;
 }
 
 #[derive(Debug, Error)]
