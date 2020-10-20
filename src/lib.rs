@@ -132,7 +132,7 @@ impl Win32Impl {
 
 }
 
-/// Call this function in WndProc and provide it an imgui Context + all the arguments WndProc takes
+/// Call this function in WndProc
 pub unsafe fn imgui_win32_window_proc(
     window: HWND,
     msg: UINT,
