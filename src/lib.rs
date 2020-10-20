@@ -1,7 +1,7 @@
 use std::mem;
 use std::ptr;
 
-use imgui::{BackendFlags, ConfigFlags, Context, ImString, Key};
+use imgui::{BackendFlags, Context, ImString, Key};
 use imgui_sys::*;
 use std::time::Instant;
 use thiserror::Error;
@@ -99,117 +99,8 @@ impl Win32Impl {
         self.update_cursor_pos(context);
         if self.last_cursor != current_cursor {
             self.last_cursor = current_cursor;
-            update_cursor(context);
+            update_cursor();
         }
-
-        Ok(())
-    }
-
-
-
-    /// Call this function in WndProc and provide it an imgui Context + all the arguments WndProc takes
-    pub unsafe fn window_proc(
-        &self,
-        context: &mut Context,
-        window: HWND,
-        msg: UINT,
-        wparam: WPARAM,
-        lparam: LPARAM,
-    ) -> Result<(), Win32ImplError> {
-        let io = context.io_mut();
-
-        // awful after fmt but it works i guess
-        match msg {
-            WM_LBUTTONDOWN | WM_LBUTTONDBLCLK | WM_RBUTTONDOWN | WM_RBUTTONDBLCLK
-            | WM_MBUTTONDOWN | WM_MBUTTONDBLCLK => {
-                let mut button = 0;
-                if msg == WM_LBUTTONDOWN || msg == WM_LBUTTONDBLCLK {
-                    button = 0;
-                }
-                if msg == WM_RBUTTONDOWN || msg == WM_RBUTTONDBLCLK {
-                    button = 1;
-                }
-                if msg == WM_MBUTTONDOWN || msg == WM_MBUTTONDBLCLK {
-                    button = 2;
-                }
-                if msg == WM_XBUTTONDOWN || msg == WM_XBUTTONDBLCLK {
-                    button = if GET_XBUTTON_WPARAM(wparam) == XBUTTON1 {
-                        3
-                    } else {
-                        4
-                    }
-                }
-
-                if !igIsAnyMouseDown() && GetCapture().is_null() {
-                    SetCapture(window);
-                }
-
-                io.mouse_down[button] = true;
-            }
-
-            WM_LBUTTONUP | WM_RBUTTONUP | WM_MBUTTONUP | WM_XBUTTONUP => {
-                let mut button = 0;
-                if msg == WM_LBUTTONUP {
-                    button = 0;
-                }
-                if msg == WM_RBUTTONUP {
-                    button = 1;
-                }
-                if msg == WM_MBUTTONUP {
-                    button = 2;
-                }
-                if msg == WM_XBUTTONUP {
-                    button = if GET_XBUTTON_WPARAM(wparam) == XBUTTON1 {
-                        3
-                    } else {
-                        4
-                    }
-                }
-
-                io.mouse_down[button] = false;
-                if !igIsAnyMouseDown() && GetCapture() == window {
-                    ReleaseCapture();
-                }
-            }
-
-            WM_MOUSEWHEEL => {
-                io.mouse_wheel += (GET_WHEEL_DELTA_WPARAM(wparam) / WHEEL_DELTA) as f32;
-            }
-
-            WM_MOUSEHWHEEL => {
-                io.mouse_wheel_h += (GET_WHEEL_DELTA_WPARAM(wparam) / WHEEL_DELTA) as f32;
-            }
-
-            WM_KEYDOWN | WM_SYSKEYDOWN => {
-                if wparam < 256 {
-                    io.keys_down[wparam] = true;
-                }
-            }
-
-            WM_KEYUP | WM_SYSKEYUP => {
-                if wparam < 256 {
-                    io.keys_down[wparam] = false;
-                }
-            }
-
-            WM_CHAR => {
-                if wparam > 0 && wparam < 0x10000 {
-                    let ig_io = igGetIO();
-                    ImGuiIO_AddInputCharacterUTF16(ig_io, wparam as u16);
-                }
-            }
-
-            WM_SETCURSOR => {
-                if LOWORD(lparam as u32) as isize == HTCLIENT {
-                    update_cursor(context);
-                }
-            }
-
-            // currently no gamepad support
-            WM_DEVICECHANGE => {}
-
-            _ => return Ok(()),
-        };
 
         Ok(())
     }
@@ -241,18 +132,127 @@ impl Win32Impl {
 
 }
 
-unsafe fn update_cursor(context: &mut Context) -> bool {
-    let io = context.io_mut();
+/// Call this function in WndProc and provide it an imgui Context + all the arguments WndProc takes
+pub unsafe fn imgui_win32_window_proc(
+    window: HWND,
+    msg: UINT,
+    wparam: WPARAM,
+    lparam: LPARAM,
+) -> Result<(), Win32ImplError> {
+    let io = match igGetIO().as_mut() {
+        Some(io) => io,
+        None => return Err(Win32ImplError::NullIO),
+    };
 
-    if io
-        .config_flags
-        .contains(ConfigFlags::NO_MOUSE_CURSOR_CHANGE)
+    // awful after fmt but it works i guess
+    match msg {
+        WM_LBUTTONDOWN | WM_LBUTTONDBLCLK | WM_RBUTTONDOWN | WM_RBUTTONDBLCLK
+        | WM_MBUTTONDOWN | WM_MBUTTONDBLCLK => {
+            let mut button = 0;
+            if msg == WM_LBUTTONDOWN || msg == WM_LBUTTONDBLCLK {
+                button = 0;
+            }
+            if msg == WM_RBUTTONDOWN || msg == WM_RBUTTONDBLCLK {
+                button = 1;
+            }
+            if msg == WM_MBUTTONDOWN || msg == WM_MBUTTONDBLCLK {
+                button = 2;
+            }
+            if msg == WM_XBUTTONDOWN || msg == WM_XBUTTONDBLCLK {
+                button = if GET_XBUTTON_WPARAM(wparam) == XBUTTON1 {
+                    3
+                } else {
+                    4
+                }
+            }
+
+            if !igIsAnyMouseDown() && GetCapture().is_null() {
+                SetCapture(window);
+            }
+
+            io.MouseDown[button] = true;
+        }
+
+        WM_LBUTTONUP | WM_RBUTTONUP | WM_MBUTTONUP | WM_XBUTTONUP => {
+            let mut button = 0;
+            if msg == WM_LBUTTONUP {
+                button = 0;
+            }
+            if msg == WM_RBUTTONUP {
+                button = 1;
+            }
+            if msg == WM_MBUTTONUP {
+                button = 2;
+            }
+            if msg == WM_XBUTTONUP {
+                button = if GET_XBUTTON_WPARAM(wparam) == XBUTTON1 {
+                    3
+                } else {
+                    4
+                }
+            }
+
+            io.MouseDown[button] = false;
+            if !igIsAnyMouseDown() && GetCapture() == window {
+                ReleaseCapture();
+            }
+        }
+
+        WM_MOUSEWHEEL => {
+            io.MouseWheel += (GET_WHEEL_DELTA_WPARAM(wparam) / WHEEL_DELTA) as f32;
+        }
+
+        WM_MOUSEHWHEEL => {
+            io.MouseWheelH += (GET_WHEEL_DELTA_WPARAM(wparam) / WHEEL_DELTA) as f32;
+        }
+
+        WM_KEYDOWN | WM_SYSKEYDOWN => {
+            if wparam < 256 {
+                io.KeysDown[wparam] = true;
+            }
+        }
+
+        WM_KEYUP | WM_SYSKEYUP => {
+            if wparam < 256 {
+                io.KeysDown[wparam] = false;
+            }
+        }
+
+        WM_CHAR => {
+            if wparam > 0 && wparam < 0x10000 {
+                let ig_io = igGetIO();
+                ImGuiIO_AddInputCharacterUTF16(ig_io, wparam as u16);
+            }
+        }
+
+        WM_SETCURSOR => {
+            if LOWORD(lparam as u32) as isize == HTCLIENT {
+                update_cursor();
+            }
+        }
+
+        // currently no gamepad support
+        WM_DEVICECHANGE => {}
+
+        _ => return Ok(()),
+    };
+
+    Ok(())
+}
+
+unsafe fn update_cursor() -> bool {
+    let io = match igGetIO().as_mut() {
+        Some(io) => io,
+        None => return false,
+    };
+
+    if io.ConfigFlags & ImGuiConfigFlags_NoMouseCursorChange as i32 != 0
     {
         return false
     };
 
     let mouse_cursor = igGetMouseCursor();
-    if mouse_cursor == ImGuiMouseCursor_None || io.mouse_draw_cursor {
+    if mouse_cursor == ImGuiMouseCursor_None || io.MouseDrawCursor {
         // Hide mouse cursor so imgui can draw it or if none should be displayed
         SetCursor(ptr::null_mut());
     }
@@ -280,4 +280,6 @@ unsafe fn update_cursor(context: &mut Context) -> bool {
 pub enum Win32ImplError {
     #[error("Failed to prepare frame - {0}")]
     ExternalError(String),
+    #[error("Could not get IO, reference was null")]
+    NullIO,
 }
