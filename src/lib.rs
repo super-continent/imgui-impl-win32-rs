@@ -9,7 +9,10 @@ use winapi::shared::{
     minwindef::*,
     windef::{HWND, POINT, RECT, HICON},
 };
-use winapi::um::winuser::*;
+use winapi::um::{
+    winuser::*,
+    errhandlingapi::GetLastError,
+};
 
 pub struct Win32Impl {
     hwnd: HWND,
@@ -69,7 +72,8 @@ impl Win32Impl {
         // Set up display size every frame to handle resizing
         let mut rect: RECT = mem::zeroed();
         if FALSE == GetClientRect(self.hwnd, &mut rect) {
-            return Err(Win32ImplError::ExternalError("GetClientRect failed".into()));
+            let last_err = GetLastError();
+            return Err(Win32ImplError::ExternalError(format!("GetClientRect failed with last error `{:#X}`", last_err)));
         };
         io.display_size = [
             (rect.right - rect.left) as f32,
