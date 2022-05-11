@@ -1,7 +1,7 @@
 use std::mem;
 use std::ptr;
 
-use imgui::{BackendFlags, Context, ImString, Key};
+use imgui::{BackendFlags, Context, Key};
 use imgui_sys::*;
 use std::time::Instant;
 use thiserror::Error;
