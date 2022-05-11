@@ -52,10 +52,10 @@ impl Win32Impl {
         io.key_map[Key::Y as usize] = 'Y' as u32;
         io.key_map[Key::Z as usize] = 'Z' as u32;
 
-        imgui.set_platform_name(Some(ImString::from(format!(
+        imgui.set_platform_name(Some(format!(
             "imgui_rs_impl_win32 {}",
             env!("CARGO_PKG_VERSION")
-        ))));
+        )));
 
         let last_cursor = ImGuiMouseCursor_None;
 
